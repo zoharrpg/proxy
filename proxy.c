@@ -54,6 +54,7 @@
 static const char *header_user_agent = "Mozilla/5.0"
                                        " (X11; Linux x86_64; rv:3.10.0)"
                                        " Gecko/20230411 Firefox/63.0.1";
+static const char* connection =  "Connection: close\r\nProxy-Connection: close\r\n";
 
 /* Typedef for convenience */
 typedef struct sockaddr SA;
@@ -68,6 +69,24 @@ typedef struct {
 void process_request(client_info *client);
 void clienterror(int fd, const char *errnum, const char *shortmsg,
                  const char *longmsg);
+void generate_request(char new_quest [],const char* host,const char* path,const char* port );
+
+// generate r
+void generate_request(char new_request [],const char* host,const char* path,const char* port ){
+
+            char server_header[MAXLINE];
+            char server_host[MAXLINE];
+            char ua[MAXLINE];
+
+            sprintf(server_header, "GET %s HTTP/1.0\r\n", path);
+            strcat(new_request, server_header);
+            sprintf(server_host, "Host: %s:%s\r\n", host, port);
+            strcat(new_request, server_host);
+            sprintf(ua, "User-Agent: %s\r\n", header_user_agent);
+            strcat(new_request, ua);
+            strcat(new_request, connection);
+
+}
 
 /*
  * clienterror - returns an error message to the client
@@ -128,17 +147,27 @@ void process_request(client_info *client) {
     }
 
     rio_t rio, rio_server;
+
     rio_readinitb(&rio, client->connfd);
+
     char buf[MAXLINE];
+    // reset buf
+    memset(buf,0,MAXLINE);
     int n;
     const char *method, *path, *host, *port;
-    char new_request[MAXLINE];
     parser_t *parser = parser_new();
+    char new_request[MAXLINE];
+    // reset request line
+    memset(new_request, 0, MAXLINE);
+
     parser_state state;
     int server_fd = 0;
 
-    while (n = rio_readnb(&rio, buf, sizeof(buf)) > 0) {
+    while ((n = rio_readlineb(&rio, buf, sizeof(buf))) > 0 && (strcmp(buf, "\r\n")!=0)) {
+     
+
         state = parser_parse_line(parser, buf);
+        // error case
         if (state == ERROR) {
             parser_free(parser);
 
@@ -146,9 +175,11 @@ void process_request(client_info *client) {
                         "Proxy received a malformed request");
             return;
         }
+        // request case
         if (state == REQUEST) {
 
             parser_retrieve(parser, METHOD, &method);
+
             if (strcmp(method, "GET") != 0) {
                 parser_free(parser);
                 clienterror(client->connfd, "501", "Not Implemented",
@@ -156,28 +187,32 @@ void process_request(client_info *client) {
                 return;
             }
             parser_retrieve(parser, PATH, &path);
+            
             parser_retrieve(parser, HOST, &host);
 
             parser_retrieve(parser, PORT, &port);
-            sio_printf("The port is %s\n", port);
-            sio_printf("The host is %s\n", host);
+            // sio_printf("The port is %s\n", port);
+            // sio_printf("The host is %s\n", host);
+            server_fd = open_clientfd(host, port);
+            if (server_fd < 0) {
+                sio_printf("Connection failed\n");
+                close(server_fd);
+                return;
+            }
+            rio_readinitb(&rio_server, server_fd);
+
+            generate_request(new_request,host,path,port);
 
             
-
-            sprintf(new_request, "GET %s HTTP/1.0\r\n", path);
-            sprintf(new_request, "%sHost: %s:%s\r\n", new_request, host, port);
-            sprintf(new_request, "%sUser-Agent: %s\r\n", new_request,
-                    header_user_agent);
-            sprintf(new_request,
-                    "%sConnection: close\r\nProxy-Connection: close\r\n",
-                    new_request);
         }
 
         if (state == HEADER) {
+            char current[MAXLINE];
             header_t *header;
 
             while ((header = parser_retrieve_next_header(parser)) != NULL) {
                 sio_printf("the header is %s\n", header->name);
+                // skip this host connection.. part
                 if ((!strcmp(header->name, "Host") ||
                      !strcmp(header->name, "Connection") ||
                      !strcmp(header->name, "Proxy-Connection") ||
@@ -185,30 +220,35 @@ void process_request(client_info *client) {
                     continue;
                 }
 
-                sprintf(new_request, "%s%s:%s\r\n", new_request, header->name,
-                        header->value);
+                sprintf(current, "%s:%s\r\n", header->name, header->value);
+                strcat(new_request, current);
             }
         }
     }
-    server_fd = open_clientfd(host, port);
-            if (server_fd < 0) {
-                sio_printf("Connection failed\n");
-                close(server_fd);
-                return;
-            }
-            rio_readinitb(&rio_server, server_fd);
-    sprintf(new_request, "%s\r\n", new_request);
+    // client error
+    if (strcmp(new_request, "") == 0) {
+
+        parser_free(parser);
+
+        clienterror(client->connfd, "400", "Bad Request",
+                    "Proxy received a malformed request");
+        close(server_fd);
+
+        return;
+    }
+
+    strcat(new_request, "\r\n");
     parser_free(parser);
-    sio_printf("%s\n", new_request);
 
     if ((rio_writen(server_fd, new_request, MAXLINE)) == -1) {
         sio_printf("error\n");
     }
     int n2;
     char new_buf[MAXLINE];
+    memset(new_buf,0,MAXLINE);
 
     while ((n2 = rio_readnb(&rio_server, new_buf, MAXLINE)) > 0) {
-        rio_writen(client->connfd, new_buf, n);
+        rio_writen(client->connfd, new_buf, n2);
     }
     close(server_fd);
 }

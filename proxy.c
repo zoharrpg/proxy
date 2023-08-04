@@ -54,7 +54,8 @@
 static const char *header_user_agent = "Mozilla/5.0"
                                        " (X11; Linux x86_64; rv:3.10.0)"
                                        " Gecko/20230411 Firefox/63.0.1";
-static const char* connection =  "Connection: close\r\nProxy-Connection: close\r\n";
+static const char *connection =
+    "Connection: close\r\nProxy-Connection: close\r\n";
 
 /* Typedef for convenience */
 typedef struct sockaddr SA;
@@ -69,23 +70,24 @@ typedef struct {
 void process_request(client_info *client);
 void clienterror(int fd, const char *errnum, const char *shortmsg,
                  const char *longmsg);
-void generate_request(char new_quest [],const char* host,const char* path,const char* port );
+void generate_request(char new_quest[], const char *host, const char *path,
+                      const char *port);
 
 // generate r
-void generate_request(char new_request [],const char* host,const char* path,const char* port ){
+void generate_request(char new_request[], const char *host, const char *path,
+                      const char *port) {
 
-            char server_header[MAXLINE];
-            char server_host[MAXLINE];
-            char ua[MAXLINE];
+    char server_header[MAXLINE];
+    char server_host[MAXLINE];
+    char ua[MAXLINE];
 
-            sprintf(server_header, "GET %s HTTP/1.0\r\n", path);
-            strcat(new_request, server_header);
-            sprintf(server_host, "Host: %s:%s\r\n", host, port);
-            strcat(new_request, server_host);
-            sprintf(ua, "User-Agent: %s\r\n", header_user_agent);
-            strcat(new_request, ua);
-            strcat(new_request, connection);
-
+    sprintf(server_header, "GET %s HTTP/1.0\r\n", path);
+    strcat(new_request, server_header);
+    sprintf(server_host, "Host: %s:%s\r\n", host, port);
+    strcat(new_request, server_host);
+    sprintf(ua, "User-Agent: %s\r\n", header_user_agent);
+    strcat(new_request, ua);
+    strcat(new_request, connection);
 }
 
 /*
@@ -152,7 +154,7 @@ void process_request(client_info *client) {
 
     char buf[MAXLINE];
     // reset buf
-    memset(buf,0,MAXLINE);
+    memset(buf, 0, MAXLINE);
     int n;
     const char *method, *path, *host, *port;
     parser_t *parser = parser_new();
@@ -163,8 +165,8 @@ void process_request(client_info *client) {
     parser_state state;
     int server_fd = 0;
 
-    while ((n = rio_readlineb(&rio, buf, sizeof(buf))) > 0 && (strcmp(buf, "\r\n")!=0)) {
-     
+    while ((n = rio_readlineb(&rio, buf, sizeof(buf))) > 0 &&
+           (strcmp(buf, "\r\n") != 0)) {
 
         state = parser_parse_line(parser, buf);
         // error case
@@ -187,7 +189,7 @@ void process_request(client_info *client) {
                 return;
             }
             parser_retrieve(parser, PATH, &path);
-            
+
             parser_retrieve(parser, HOST, &host);
 
             parser_retrieve(parser, PORT, &port);
@@ -201,9 +203,7 @@ void process_request(client_info *client) {
             }
             rio_readinitb(&rio_server, server_fd);
 
-            generate_request(new_request,host,path,port);
-
-            
+            generate_request(new_request, host, path, port);
         }
 
         if (state == HEADER) {
@@ -245,7 +245,7 @@ void process_request(client_info *client) {
     }
     int n2;
     char new_buf[MAXLINE];
-    memset(new_buf,0,MAXLINE);
+    memset(new_buf, 0, MAXLINE);
 
     while ((n2 = rio_readnb(&rio_server, new_buf, MAXLINE)) > 0) {
         rio_writen(client->connfd, new_buf, n2);

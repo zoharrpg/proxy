@@ -252,6 +252,18 @@ void process_request(client_info *client) {
     }
     close(server_fd);
 }
+void *thread(void *vargp){
+    client_info *client = ((client_info*)vargp);
+    pthread_detach(pthread_self());
+
+    process_request(client);
+    close(client->connfd);
+
+    free(client);
+    return NULL;
+
+
+}
 
 int main(int argc, char **argv) {
     int listenfd;
@@ -271,8 +283,7 @@ int main(int argc, char **argv) {
     }
     while (1) {
         /* Allocate space on the stack for client info */
-        client_info client_data;
-        client_info *client = &client_data;
+        client_info *client = malloc(sizeof(client_info));
 
         /* Initialize the length of the address */
         client->addrlen = sizeof(client->addr);
@@ -284,8 +295,9 @@ int main(int argc, char **argv) {
             perror("accept");
             continue;
         }
-        process_request(client);
-        close(client->connfd);
+        pthread_t tid;
+        pthread_create(&tid,NULL,thread,(void*)(client));
+
     }
     return 0;
 }

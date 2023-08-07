@@ -58,6 +58,7 @@ static const char *header_user_agent = "Mozilla/5.0"
 static const char *connection =
     "Connection: close\r\nProxy-Connection: close\r\n";
 pthread_mutex_t mutex;
+static bool key_flag= false;
 /* Typedef for convenience */
 typedef struct sockaddr SA;
 
@@ -156,7 +157,6 @@ void process_request(client_info *client) {
     char buf[MAXLINE];
     // reset buf
     memset(buf, 0, MAXLINE);
-
     char key[MAXLINE];
     memset(key, 0, MAXLINE);
 
@@ -194,7 +194,9 @@ void process_request(client_info *client) {
                 return;
             }
             parser_retrieve(parser,URI,&uri);
-             memcpy(key,uri,strlen(uri));
+            
+            memcpy(key,uri,strlen(uri));
+            sio_printf("This is uri\n%s\n",key);
             pthread_mutex_lock(&mutex);
             block_t *block = search_cache(key);
 

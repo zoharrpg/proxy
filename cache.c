@@ -92,7 +92,7 @@ void add_block(char key[MAXLINE],char value[MAX_OBJECT_SIZE],size_t length){
 
 
     }
-    block++;
+    block_count++;
     return;
 
 
@@ -106,7 +106,9 @@ block_t* search_cache(char key[MAXLINE]){
     block_t* current;
 
     for (current = head; current!= NULL;current=current->next){
+        sio_printf("The current is %s\n",current->key);
         if(!strcmp (current->key,key)){
+            sio_printf("Searching current\n");
             current->lru_count = lru_counter;
             return current;
         }

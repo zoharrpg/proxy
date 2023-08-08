@@ -17,6 +17,7 @@
 #include <strings.h>
 #include <unistd.h>
 
+#include "cache.h"
 #include "http_parser.h"
 #include <errno.h>
 #include <netdb.h>
@@ -25,7 +26,6 @@
 #include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include "cache.h"
 
 /*
  * Debug macros, which can be enabled by adding -DDEBUG in the Makefile
@@ -58,7 +58,7 @@ static const char *header_user_agent = "Mozilla/5.0"
 static const char *connection =
     "Connection: close\r\nProxy-Connection: close\r\n";
 pthread_mutex_t mutex;
-static bool key_flag= false;
+
 /* Typedef for convenience */
 typedef struct sockaddr SA;
 
@@ -161,7 +161,7 @@ void process_request(client_info *client) {
     memset(key, 0, MAXLINE);
 
     int n;
-    const char *method, *path, *host, *port,*uri;
+    const char *method, *path, *host, *port, *uri;
     parser_t *parser = parser_new();
     char new_request[MAXLINE];
     // reset request line
@@ -193,21 +193,27 @@ void process_request(client_info *client) {
                             "Proxy does not implement this method");
                 return;
             }
-            parser_retrieve(parser,URI,&uri);
-            
-            memcpy(key,uri,strlen(uri));
-            sio_printf("This is uri\n%s\n",key);
+            parser_retrieve(parser, URI, &uri);
+
+            memcpy(key, uri, strlen(uri));
+            sio_printf("This is uri\n%s\n", key);
+
             pthread_mutex_lock(&mutex);
             block_t *block = search_cache(key);
 
-            if(block!=NULL){
-                rio_writen(client->connfd,block->value,block->value_length);
+            if (block != NULL) {
+                char tmp[MAX_OBJECT_SIZE];
+                memset(tmp, 0, MAX_OBJECT_SIZE);
+
+                size_t length = block->value_length;
+                memcpy(tmp, block->value, length);
                 pthread_mutex_unlock(&mutex);
+
+                rio_writen(client->connfd, tmp, length);
                 return;
             }
-           
-
             pthread_mutex_unlock(&mutex);
+
             parser_retrieve(parser, PATH, &path);
 
             parser_retrieve(parser, HOST, &host);
@@ -230,8 +236,8 @@ void process_request(client_info *client) {
             header_t *header;
 
             while ((header = parser_retrieve_next_header(parser)) != NULL) {
-                //sio_printf("the header is %s\n", header->name);
-                // skip this host connection.. part
+                // sio_printf("the header is %s\n", header->name);
+                //  skip this host connection.. part
                 if ((!strcmp(header->name, "Host") ||
                      !strcmp(header->name, "Connection") ||
                      !strcmp(header->name, "Proxy-Connection") ||
@@ -264,25 +270,35 @@ void process_request(client_info *client) {
     }
     int n2;
     char new_buf[MAXLINE];
+
     char value[MAX_OBJECT_SIZE];
+
     memset(new_buf, 0, MAXLINE);
-    memset(value,0,MAX_OBJECT_SIZE);
+    memset(value, 0, MAX_OBJECT_SIZE);
     size_t current_index = 0;
 
     while ((n2 = rio_readnb(&rio_server, new_buf, MAXLINE)) > 0) {
-        memcpy(value,new_buf,n2);
-        current_index = n2;
-        //sio_printf("%s ref\n",new_buf);
-     
+        if (current_index + n2 < MAX_OBJECT_SIZE) {
+            memcpy(&value[current_index], new_buf, n2);
+        }
+        current_index += n2;
+        // sio_printf("%s ref\n",new_buf);
+
         rio_writen(client->connfd, new_buf, n2);
     }
-     pthread_mutex_lock(&mutex);
-    add_block(key,value,current_index);
+
+    pthread_mutex_lock(&mutex);
+    sio_printf("Attention: The key is %s\n", key);
+    if (current_index <= MAX_OBJECT_SIZE) {
+        add_block(key, value, current_index);
+    }
+
     pthread_mutex_unlock(&mutex);
+
     close(server_fd);
 }
-void *thread(void *vargp){
-    client_info *client = ((client_info*)vargp);
+void *thread(void *vargp) {
+    client_info *client = ((client_info *)vargp);
     pthread_detach(pthread_self());
 
     process_request(client);
@@ -290,11 +306,10 @@ void *thread(void *vargp){
 
     free(client);
     return NULL;
-
-
 }
 
 int main(int argc, char **argv) {
+
     int listenfd;
 
     /* Check command line args */
@@ -302,7 +317,8 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
     }
-    pthread_mutex_init(&mutex,NULL);
+    cache_init();
+    pthread_mutex_init(&mutex, NULL);
     signal(SIGPIPE, SIG_IGN);
 
     // Open listening file descriptor
@@ -326,9 +342,9 @@ int main(int argc, char **argv) {
             continue;
         }
         pthread_t tid;
-        pthread_create(&tid,NULL,thread,(void*)(client));
-
+        pthread_create(&tid, NULL, thread, (void *)(client));
     }
+    cache_free();
     pthread_mutex_destroy(&mutex);
     return 0;
 }

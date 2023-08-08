@@ -22,7 +22,7 @@ static size_t cache_size = 0;
 block_t *search_evict_block() {
     block_t *min_lru_block = head;
     block_t *current;
-
+    /*find min lru block in the list*/
     for (current = head; current != NULL; current = current->next) {
         if (current->lru_count < min_lru_block->lru_count) {
             min_lru_block = current;
@@ -48,9 +48,11 @@ block_t *search_evict_block() {
  */
 block_t *block_init(char key[MAXLINE], char value[MAX_OBJECT_SIZE],
                     size_t length) {
+    /*initalize the block*/
     block_t *block = malloc(sizeof(block_t));
     memcpy(block->key, key, MAXLINE);
     memcpy(block->value, value, MAX_OBJECT_SIZE);
+    /*update the lru data*/
     lru_counter++;
     block->lru_count = lru_counter;
     block->value_length = length;
@@ -65,11 +67,12 @@ block_t *block_init(char key[MAXLINE], char value[MAX_OBJECT_SIZE],
  *
  */
 void remove_block(block_t *block) {
+    /*length of the web object*/
     size_t length = block->value_length;
 
     block_t *prev = block->prev;
     block_t *next = block->next;
-
+    /*free the block and handle each case*/
     if (prev == NULL && next == NULL) {
         head = NULL;
         free(block);
@@ -108,15 +111,16 @@ void remove_block(block_t *block) {
  * @return The function does not explicitly return a value.
  */
 void add_block(char key[MAXLINE], char value[MAX_OBJECT_SIZE], size_t length) {
-
+    /*check if the block is exist in the cache*/
     block_t *check = chceck_cache_repeat(key);
+    /*if the block exsit in the cache, resturn*/
     if (check != NULL) {
         return;
     }
-
+    /*remove block until it below the MAX_CACHE_SIZE*/
     while (cache_size + length > MAX_CACHE_SIZE) {
+
         block_t *evict = search_evict_block();
-        sio_printf("the lru counter %d\n", evict->lru_count);
 
         if (evict != NULL) {
             remove_block(evict);
@@ -127,14 +131,17 @@ void add_block(char key[MAXLINE], char value[MAX_OBJECT_SIZE], size_t length) {
 
     block_t *block = block_init(key, value, length);
 
+    /*add block on head*/
     if (head == NULL) {
         head = block;
 
     } else {
+        /*add block in the middle or end of the list*/
         block->next = head;
         head->prev = block;
         head = block;
     }
+    /*add total cache size*/
     cache_size += length;
     return;
 }
@@ -152,7 +159,6 @@ block_t *chceck_cache_repeat(char key[MAXLINE]) {
     block_t *current;
 
     for (current = head; current != NULL; current = current->next) {
-        // sio_printf("The current is %s\n",current->key);
         if (!strcmp(current->key, key)) {
 
             return current;
@@ -176,6 +182,7 @@ block_t *search_cache(char key[MAXLINE]) {
 
     for (current = head; current != NULL; current = current->next) {
         if (!strcmp(current->key, key)) {
+            /*found the block in the cache and update lru data in block*/
             lru_counter++;
             current->lru_count = lru_counter;
             return current;
@@ -200,6 +207,7 @@ void cache_init(void) {
  * blocks.
  */
 void cache_free(void) {
+    /*clean cache list*/
     block_t *current = NULL;
     while (current != NULL) {
         block_t *next = current->next;

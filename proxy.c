@@ -1,6 +1,7 @@
-/*
- * Starter code for proxy lab.
- * Feel free to modify this code in whatever way you wish.
+/**
+ * @file proxy.c
+ * @brief A simple multithread proxy supporting LRU cache
+ * @author Junshang Jia <junshanj@andrew.cmu.edu>
  */
 
 /* Some useful includes to help you get started */
@@ -69,24 +70,44 @@ typedef struct {
     char host[HOSTLEN];      // Client host
     char serv[SERVLEN];      // Client service (port)
 } client_info;
+
 void process_request(client_info *client);
+
 void clienterror(int fd, const char *errnum, const char *shortmsg,
                  const char *longmsg);
 void generate_request(char new_quest[], const char *host, const char *path,
                       const char *port);
 
-// generate r
+/**
+ * The function generates an HTTP request with the specified host, path, and
+ * port.
+ *
+ * @param new_request The `new_request` parameter is a character array that will
+ * store the generated HTTP request.
+ * @param host The `host` parameter represents the hostname or IP address of the
+ * server you want to send the request to.
+ * @param path The `path` parameter is a string that represents the path of the
+ * resource on the server that you want to request. For example, if you want to
+ * request the homepage of a website, the `path` could be "/index.html".
+ * @param port The `port` parameter is a string that represents the port number
+ * of the server you want to connect to.
+ */
 void generate_request(char new_request[], const char *host, const char *path,
                       const char *port) {
 
-    char server_header[MAXLINE];
-    char server_host[MAXLINE];
-    char ua[MAXLINE];
+    char server_header[MAXLINE]; /*server header*/
+    char server_host[MAXLINE];   /*host name*/
+    char ua[MAXLINE];            /*user agent*/
 
+    /*change to http 1.0*/
     sprintf(server_header, "GET %s HTTP/1.0\r\n", path);
+    /*concate it to new_request*/
     strcat(new_request, server_header);
+    /*store host and port*/
     sprintf(server_host, "Host: %s:%s\r\n", host, port);
+    /*concate it to new_request*/
     strcat(new_request, server_host);
+    /*stort header user agent*/
     sprintf(ua, "User-Agent: %s\r\n", header_user_agent);
     strcat(new_request, ua);
     strcat(new_request, connection);
@@ -140,6 +161,16 @@ void clienterror(int fd, const char *errnum, const char *shortmsg,
     }
 }
 
+/**
+ * The function `process_request` handles incoming client requests, retrieves
+ * information from the request, sends it to a server, and caches the response
+ * if necessary.
+ *
+ * @param client The `client` parameter is a pointer to a `client_info` struct.
+ * This struct contains information about the client connection, such as the
+ * client's address, connection file descriptor, and other relevant data.
+ *
+ */
 void process_request(client_info *client) {
     int res = getnameinfo((SA *)&client->addr, client->addrlen, client->host,
                           sizeof(client->host), client->serv,
@@ -153,11 +184,14 @@ void process_request(client_info *client) {
     rio_t rio, rio_server;
 
     rio_readinitb(&rio, client->connfd);
-
+    /*buffer*/
     char buf[MAXLINE];
-    // reset buf
+
+    /*reset buf*/
     memset(buf, 0, MAXLINE);
+    /*cache key*/
     char key[MAXLINE];
+    /*reset cache key*/
     memset(key, 0, MAXLINE);
 
     int n;
@@ -168,8 +202,9 @@ void process_request(client_info *client) {
     memset(new_request, 0, MAXLINE);
 
     parser_state state;
-    int server_fd = 0;
 
+    int server_fd = 0; /*server fd*/
+    /*read from client*/
     while ((n = rio_readlineb(&rio, buf, sizeof(buf))) > 0 &&
            (strcmp(buf, "\r\n") != 0)) {
 
@@ -195,32 +230,62 @@ void process_request(client_info *client) {
             }
             parser_retrieve(parser, URI, &uri);
 
+            /*copy uri to key*/
             memcpy(key, uri, strlen(uri));
-            sio_printf("This is uri\n%s\n", key);
 
+            /*check if key in the cache*/
+            /*lock the global cache*/
             pthread_mutex_lock(&mutex);
-            block_t *block = search_cache(key);
 
+            /*search key from the cache*/
+            block_t *block = search_cache(key);
+            /*if block is null, meaning it return the web object from cache*/
             if (block != NULL) {
+                /*store cache value in the tmp*/
                 char tmp[MAX_OBJECT_SIZE];
                 memset(tmp, 0, MAX_OBJECT_SIZE);
 
                 size_t length = block->value_length;
                 memcpy(tmp, block->value, length);
+                /*unlock*/
                 pthread_mutex_unlock(&mutex);
 
                 rio_writen(client->connfd, tmp, length);
                 return;
             }
+            /*unlock*/
             pthread_mutex_unlock(&mutex);
 
-            parser_retrieve(parser, PATH, &path);
+            int result;
 
-            parser_retrieve(parser, HOST, &host);
+            /*get path,host ,port*/
+            if ((result = (parser_retrieve(parser, PATH, &path))) != 0) {
+                parser_free(parser);
 
-            parser_retrieve(parser, PORT, &port);
+                clienterror(client->connfd, "400", "Bad Request",
+                            "Proxy received a malformed request");
+                return;
+            }
 
+            if ((result = parser_retrieve(parser, HOST, &host)) != 0) {
+                parser_free(parser);
+
+                clienterror(client->connfd, "400", "Bad Request",
+                            "Proxy received a malformed request");
+                return;
+            }
+
+            if ((result = parser_retrieve(parser, PORT, &port)) != 0) {
+                parser_free(parser);
+
+                clienterror(client->connfd, "400", "Bad Request",
+                            "Proxy received a malformed request");
+                return;
+            }
+
+            /*open server*/
             server_fd = open_clientfd(host, port);
+            /*error on open server*/
             if (server_fd < 0) {
                 sio_printf("Connection failed\n");
                 close(server_fd);
@@ -228,15 +293,15 @@ void process_request(client_info *client) {
             }
             rio_readinitb(&rio_server, server_fd);
 
+            /*generate request*/
             generate_request(new_request, host, path, port);
         }
-
+        /*parse header*/
         if (state == HEADER) {
             char current[MAXLINE];
             header_t *header;
 
             while ((header = parser_retrieve_next_header(parser)) != NULL) {
-                // sio_printf("the header is %s\n", header->name);
                 //  skip this host connection.. part
                 if ((!strcmp(header->name, "Host") ||
                      !strcmp(header->name, "Connection") ||
@@ -265,49 +330,76 @@ void process_request(client_info *client) {
     strcat(new_request, "\r\n");
     parser_free(parser);
 
+    /*send request to server*/
     if ((rio_writen(server_fd, new_request, MAXLINE)) == -1) {
         sio_printf("error\n");
     }
     int n2;
     char new_buf[MAXLINE];
-
+    /*web object*/
     char value[MAX_OBJECT_SIZE];
-
+    /*reset*/
     memset(new_buf, 0, MAXLINE);
+    /*reset*/
     memset(value, 0, MAX_OBJECT_SIZE);
+    /*index of valid data in the value array*/
     size_t current_index = 0;
 
+    /*read data from server*/
     while ((n2 = rio_readnb(&rio_server, new_buf, MAXLINE)) > 0) {
+        /*if size of data is greater than max_object_size, skip copy data*/
         if (current_index + n2 < MAX_OBJECT_SIZE) {
             memcpy(&value[current_index], new_buf, n2);
         }
         current_index += n2;
-        // sio_printf("%s ref\n",new_buf);
 
         rio_writen(client->connfd, new_buf, n2);
     }
 
     pthread_mutex_lock(&mutex);
-    sio_printf("Attention: The key is %s\n", key);
+    /*add block if size less than the MAX_OBJECT_SIZE*/
     if (current_index <= MAX_OBJECT_SIZE) {
         add_block(key, value, current_index);
     }
 
     pthread_mutex_unlock(&mutex);
-
+    /*close serve connect*/
     close(server_fd);
 }
+/**
+ * The function creates a new thread to process a client request and then closes
+ * the connection and frees the memory.
+ *
+ * @param vargp The parameter `vargp` is a void pointer that is used to pass the
+ * client information to the thread. It is casted to `client_info*` inside the
+ * function to access the client information.
+ *
+ * @return a NULL pointer.
+ */
 void *thread(void *vargp) {
+    /*client data*/
     client_info *client = ((client_info *)vargp);
+    /*detach from main thread*/
     pthread_detach(pthread_self());
-
+    /*process request*/
     process_request(client);
+    /*close client*/
     close(client->connfd);
-
+    /*free client resource*/
     free(client);
     return NULL;
 }
 
+/**
+ * The main function is a server program that listens for incoming connections
+ * on a specified port and creates a new thread to handle each client
+ * connection.
+ *
+ * @param argc The argc parameter is an integer that represents the number of
+ * command line arguments passed to the program.
+ * @param argv port
+ *
+ */
 int main(int argc, char **argv) {
 
     int listenfd;
@@ -317,8 +409,11 @@ int main(int argc, char **argv) {
         fprintf(stderr, "usage: %s <port>\n", argv[0]);
         exit(1);
     }
+    /*initialize cache*/
     cache_init();
+    /*initialize lock*/
     pthread_mutex_init(&mutex, NULL);
+    /*ignore SIGPIPE signal*/
     signal(SIGPIPE, SIG_IGN);
 
     // Open listening file descriptor
@@ -327,6 +422,7 @@ int main(int argc, char **argv) {
         fprintf(stderr, "Failed to listen on port: %s\n", argv[1]);
         exit(1);
     }
+    /*server rountine*/
     while (1) {
         /* Allocate space on the stack for client info */
         client_info *client = malloc(sizeof(client_info));
@@ -341,9 +437,11 @@ int main(int argc, char **argv) {
             perror("accept");
             continue;
         }
+        /*create a new thread to heandle request*/
         pthread_t tid;
         pthread_create(&tid, NULL, thread, (void *)(client));
     }
+    /*clean resource*/
     cache_free();
     pthread_mutex_destroy(&mutex);
     return 0;
